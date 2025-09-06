@@ -1,0 +1,9 @@
+{
+  "model": "gemini-2.5-pro",
+  "vscode_integration": true,
+  "workspace_context": true,
+  "extensions": ["vscode-companion"],
+  "approval_mode": "default",
+  "include_all_files": false,
+  "debug": false
+}

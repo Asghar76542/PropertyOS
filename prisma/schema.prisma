@@ -1,0 +1,369 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User types
+enum UserRole {
+  LANDLORD
+  TENANT
+  CONTRACTOR
+  ADMIN
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PENDING
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum MaintenanceStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ComplianceStatus {
+  COMPLIANT
+  PENDING
+  OVERDUE
+  EXPIRED
+}
+
+enum DocumentType {
+  LEASE_AGREEMENT
+  GAS_SAFETY_CERTIFICATE
+  EPC_CERTIFICATE
+  ELECTRICAL_SAFETY_CERTIFICATE
+  INVENTORY_REPORT
+  DEPOSIT_PROTECTION_CERTIFICATE
+  INSURANCE_DOCUMENT
+  OTHER
+}
+
+// Main User model
+model User {
+  id                String            @id @default(cuid())
+  email             String            @unique
+  firstName         String?
+  lastName          String?
+  name              String?
+  phone             String?
+  password          String?
+  role              UserRole          @default(LANDLORD)
+  subscriptionStatus SubscriptionStatus @default(PENDING)
+  subscriptionEndsAt DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  // Relations
+  properties        Property[]
+  landlordTenancies Tenancy[]         @relation("LandlordTenancy")
+  tenantTenancies   Tenancy[]         @relation("TenantTenancy")
+  payments          Payment[]
+  documents         Document[]
+  maintenanceRequests MaintenanceRequest[]
+  complianceRecords ComplianceRecord[]
+  maintenanceAssignments MaintenanceRequest[] @relation("MaintenanceAssignee")
+  tenantScreenings  TenantScreening[]
+  userMetrics       UserMetrics[]
+  sentMessages      Message[]         @relation("MessagesSent")
+  receivedMessages  Message[]         @relation("MessagesReceived")
+  
+  // Profile relations
+  landlordProfile   LandlordProfile?
+  tenantProfile     TenantProfile?
+  
+  @@map("users")
+}
+
+// Property model
+model Property {
+  id          String   @id @default(cuid())
+  address     String
+  city        String
+  postcode    String
+  propertyType String  // Apartment, House, Commercial, etc.
+  bedrooms    Int?
+  bathrooms   Int?
+  size        String?  // in square meters or feet
+  description String?
+  monthlyRent Float    // Using Float instead of Decimal for SQLite
+  deposit     Float    // Using Float instead of Decimal for SQLite
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  landlordId  String
+  landlord    User     @relation(fields: [landlordId], references: [id])
+  tenancies   Tenancy[]
+  documents   Document[]
+  maintenanceRequests MaintenanceRequest[]
+  complianceRecords ComplianceRecord[]
+  payments    Payment[]
+  tenantScreenings TenantScreening[]
+  marketplaceTransactions MarketplaceTransaction[]
+  
+  @@map("properties")
+}
+
+// Tenancy model
+model Tenancy {
+  id           String   @id @default(cuid())
+  startDate    DateTime
+  endDate      DateTime
+  monthlyRent  Float    // Using Float instead of Decimal for SQLite
+  deposit      Float    // Using Float instead of Decimal for SQLite
+  status       String   @default("active") // active, ended, pending
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  propertyId   String
+  property     Property @relation(fields: [propertyId], references: [id])
+  landlordId   String
+  landlord     User     @relation("LandlordTenancy", fields: [landlordId], references: [id])
+  tenantId     String
+  tenant       User     @relation("TenantTenancy", fields: [tenantId], references: [id])
+  payments     Payment[]
+  documents    Document[]
+  depositProtections DepositProtection[]
+  
+  @@map("tenancies")
+}
+
+// Payment model
+model Payment {
+  id            String        @id @default(cuid())
+  amount        Float         // Using Float instead of Decimal for SQLite
+  processingFee Float         @default(0) // 5% of rent
+  status        PaymentStatus @default(PENDING)
+  paymentDate   DateTime?
+  dueDate       DateTime
+  description   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  propertyId    String
+  property      Property      @relation(fields: [propertyId], references: [id])
+  landlordId    String
+  landlord      User          @relation(fields: [landlordId], references: [id])
+  tenancyId     String?
+  tenancy       Tenancy?      @relation(fields: [tenancyId], references: [id])
+  
+  @@map("payments")
+}
+
+// Document model
+model Document {
+  id          String       @id @default(cuid())
+  filename    String
+  originalName String
+  filePath    String
+  fileSize    Int
+  mimeType    String
+  documentType DocumentType
+  description String?
+  expiresAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  propertyId  String
+  property    Property     @relation(fields: [propertyId], references: [id])
+  uploadedBy  String
+  uploader    User         @relation(fields: [uploadedBy], references: [id])
+  tenancyId   String?
+  tenancy     Tenancy?     @relation(fields: [tenancyId], references: [id])
+  complianceRecords ComplianceRecord[]
+  
+  @@map("documents")
+}
+
+// Maintenance Request model
+model MaintenanceRequest {
+  id          String            @id @default(cuid())
+  title       String
+  description String
+  status      MaintenanceStatus @default(OPEN)
+  priority    String            @default("medium") // low, medium, high, urgent
+  estimatedCost Float?          // Using Float instead of Decimal for SQLite
+  actualCost   Float?           // Using Float instead of Decimal for SQLite
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  // Relations
+  propertyId  String
+  property    Property          @relation(fields: [propertyId], references: [id])
+  reportedBy  String
+  reporter    User              @relation(fields: [reportedBy], references: [id])
+  assignedTo  String?
+  assignee    User?             @relation("MaintenanceAssignee", fields: [assignedTo], references: [id])
+  
+  @@map("maintenance_requests")
+}
+
+// Compliance Record model
+model ComplianceRecord {
+  id          String           @id @default(cuid())
+  title       String
+  description String
+  requirement String           // The regulation requirement
+  status      ComplianceStatus @default(PENDING)
+  dueDate     DateTime
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // Relations
+  propertyId  String
+  property    Property         @relation(fields: [propertyId], references: [id])
+  documentId  String?
+  document    Document?        @relation(fields: [documentId], references: [id])
+  userId      String?
+  user        User?            @relation(fields: [userId], references: [id])
+  
+  @@map("compliance_records")
+}
+
+// Service Fee models for additional revenue streams
+model TenantScreening {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      User     @relation(fields: [tenantId], references: [id])
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  fee         Float    // Using Float instead of Decimal for SQLite (£15-25)
+  status      String   @default("pending") // pending, completed, failed
+  reportData  String?  // JSON data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("tenant_screenings")
+}
+
+model DepositProtection {
+  id          String   @id @default(cuid())
+  tenancyId   String
+  tenancy     Tenancy  @relation(fields: [tenancyId], references: [id])
+  amount      Float    // Using Float instead of Decimal for SQLite
+  fee         Float    // Using Float instead of Decimal for SQLite (£20-30)
+  scheme      String   // Deposit protection scheme name
+  reference   String?  // Scheme reference
+  status      String   @default("pending") // pending, protected, released
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("deposit_protections")
+}
+
+model MarketplaceTransaction {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  serviceType String   // Type of service
+  provider    String   // Service provider
+  amount      Float    // Using Float instead of Decimal for SQLite
+  commission  Float    // Using Float instead of Decimal for SQLite (10-15%)
+  status      String   @default("pending") // pending, completed, cancelled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("marketplace_transactions")
+}
+
+// Analytics and metrics
+model UserMetrics {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  metricType    String   // CAC, LTV, etc.
+  metricValue   Float    // Using Float instead of Decimal for SQLite
+  date          DateTime
+  createdAt     DateTime @default(now())
+  
+  @@map("user_metrics")
+}
+
+// Message system
+model Message {
+  id        String   @id @default(cuid())
+  subject   String
+  body      String
+  fromId    String
+  toId      String
+  from      User     @relation("MessagesSent", fields: [fromId], references: [id])
+  to        User     @relation("MessagesReceived", fields: [toId], references: [id])
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("messages")
+}
+
+// Profile models for additional user information
+
+model LandlordProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  companyName       String?
+  businessAddress   String?
+  businessCity      String?
+  businessPostcode  String?
+  licenseNumber     String?
+  taxNumber         String?
+  bankAccountName   String?
+  bankAccountNumber String?
+  bankSortCode      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("landlord_profiles")
+}
+
+model TenantProfile {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  dateOfBirth      DateTime?
+  currentAddress   String?
+  city             String?
+  postcode         String?
+  employmentStatus String?
+  employerName     String?
+  monthlyIncome    Int?
+  emergencyContact String?
+  emergencyPhone   String?
+  previousAddress  String?
+  moveInDate       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_profiles")
+}

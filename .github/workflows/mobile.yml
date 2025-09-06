@@ -1,0 +1,77 @@
+name: 📱 Build Mobile App
+
+on:
+  push:
+    branches: [main, production]
+    paths: 
+      - 'PropertyOS-Mobile/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'PropertyOS-Mobile/**'
+
+jobs:
+  build-mobile:
+    name: 📱 Build PropertyOS Mobile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./PropertyOS-Mobile
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: PropertyOS-Mobile/package-lock.json
+
+      - name: 🏗️ Setup Expo CLI
+        run: npm install -g @expo/cli
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Type checking
+        run: npx tsc --noEmit
+
+      - name: 🔍 Lint code
+        run: npx expo lint
+
+      - name: 🏗️ Build for preview
+        run: npx expo export --platform all
+
+  # Build APK for Android (optional)
+  build-android:
+    name: 🤖 Build Android APK
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/production'
+    defaults:
+      run:
+        working-directory: ./PropertyOS-Mobile
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: PropertyOS-Mobile/package-lock.json
+
+      - name: 🏗️ Setup EAS CLI
+        run: npm install -g @expo/eas-cli
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🤖 Build Android APK
+        run: |
+          echo "Building Android APK with EAS Build"
+          # Uncomment and configure when ready for EAS Build
+          # eas build --platform android --profile preview
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
