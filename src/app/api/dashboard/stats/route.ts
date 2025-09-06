@@ -1,84 +1,51 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { logger } from '@/lib/logger'
+import { AppError, ErrorCode, generateRequestId } from '@/lib/errors'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const requestId = generateRequestId();
+  let session;
   try {
-    // Get all properties for the landlord (using the first landlord as example)
-    const landlord = await db.user.findFirst({
-      where: { role: 'LANDLORD' }
-    })
-
-    if (!landlord) {
-      return NextResponse.json({ error: 'Landlord not found' }, { status: 404 })
+    session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
     }
 
-    // Get properties count
-    const propertiesCount = await db.property.count({
-      where: { landlordId: landlord.id }
-    })
+    // Verify user has proper role
+    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN') {
+      throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
 
-    // Get total monthly rent
-    const properties = await db.property.findMany({
-      where: { landlordId: landlord.id },
-      select: { id: true, monthlyRent: true, isAvailable: true }
-    })
+    const landlordId = session.user.id;
 
-    const totalMonthlyRent = properties.reduce((sum, property) => sum + property.monthlyRent, 0)
-    
-    // Calculate occupancy rate
-    const occupiedProperties = properties.filter(p => !p.isAvailable).length
-    const occupancyRate = propertiesCount > 0 ? (occupiedProperties / propertiesCount) * 100 : 0
+    const [properties, payments, maintenanceRequests, complianceRecords] = await db.$transaction([
+      db.property.findMany({
+        where: { landlordId: landlordId },
+        select: { id: true, monthlyRent: true, isAvailable: true }
+      }),
+      db.payment.findMany({
+        where: { landlordId: landlordId },
+        select: { amount: true, processingFee: true, status: true, paymentDate: true }
+      }),
+      db.maintenanceRequest.findMany({
+        where: { property: { landlordId: landlordId } },
+        select: { status: true }
+      }),
+      db.complianceRecord.findMany({
+        where: { property: { landlordId: landlordId } },
+        select: { status: true }
+      })
+    ]);
 
-    // Get total income (completed payments)
-    const payments = await db.payment.findMany({
-      where: { 
-        landlordId: landlord.id,
-        status: 'COMPLETED'
-      },
-      select: { amount: true, processingFee: true }
-    })
+    const propertiesCount = properties.length;
+    const totalMonthlyRent = properties.reduce((sum, property) => sum + property.monthlyRent, 0);
+    const occupiedProperties = properties.filter(p => !p.isAvailable).length;
+    const occupancyRate = propertiesCount > 0 ? (occupiedProperties / propertiesCount) * 100 : 0;
+    const totalIncome = payments.filter(p => p.status === 'COMPLETED').reduce((sum, payment) => sum + (payment.amount - payment.processingFee), 0);
 
-    const totalIncome = payments.reduce((sum, payment) => sum + (payment.amount - payment.processingFee), 0)
-
-    // Get property IDs for filtering (filter out undefined values)
-    const propertyIds = properties.map(p => p.id).filter((id): id is string => id !== undefined)
-
-    // Get recent maintenance requests only if we have properties
-    const maintenanceRequests = propertyIds.length > 0 
-      ? await db.maintenanceRequest.findMany({
-          where: { propertyId: { in: propertyIds } },
-          include: {
-            property: {
-              select: { address: true, city: true }
-            }
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 5
-        })
-      : []
-
-    // Get compliance status only if we have properties
-    const complianceRecords = propertyIds.length > 0
-      ? await db.complianceRecord.findMany({
-          where: { propertyId: { in: propertyIds } },
-          orderBy: { dueDate: 'asc' },
-          take: 5
-        })
-      : []
-
-    // Get recent payments
-    const recentPayments = await db.payment.findMany({
-      where: { landlordId: landlord.id },
-      include: {
-        property: {
-          select: { address: true, city: true }
-        }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 5
-    })
-
-    // Calculate metrics
     const stats = {
       properties: {
         total: propertiesCount,
@@ -103,18 +70,68 @@ export async function GET() {
         overdue: complianceRecords.filter(r => r.status === 'OVERDUE').length,
         total: complianceRecords.length
       }
-    }
+    };
+
+    const propertyIds = properties.map(p => p.id);
+
+    const [recentMaintenanceRequests, recentComplianceRecords, recentPayments] = await db.$transaction([
+        db.maintenanceRequest.findMany({
+            where: { propertyId: { in: propertyIds } },
+            include: {
+                property: {
+                    select: { address: true, city: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 5
+        }),
+        db.complianceRecord.findMany({
+            where: { propertyId: { in: propertyIds } },
+            orderBy: { dueDate: 'asc' },
+            take: 5
+        }),
+        db.payment.findMany({
+            where: { landlordId: landlordId },
+            include: {
+                property: {
+                    select: { address: true, city: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 5
+        })
+    ]);
+
 
     return NextResponse.json({
       stats,
       recentData: {
-        maintenanceRequests,
-        complianceRecords,
-        recentPayments
+        maintenanceRequests: recentMaintenanceRequests,
+        complianceRecords: recentComplianceRecords,
+        recentPayments: recentPayments
       }
     })
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error('Error fetching dashboard stats:', { error, requestId, userId: session?.user?.id })
+    
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { 
+          error: error.message,
+          code: error.code,
+          details: error.details 
+        }, 
+        { status: error.statusCode }
+      )
+    }
+    
+    return NextResponse.json(
+      { 
+        error: 'Failed to fetch dashboard statistics',
+        code: ErrorCode.INTERNAL_ERROR,
+        requestId: requestId
+      }, 
+      { status: 500 }
+    )
   }
 }

@@ -93,6 +93,7 @@ model User {
   landlordProfile   LandlordProfile?
   tenantProfile     TenantProfile?
   
+  @@index([email])
   @@map("users")
 }
 
@@ -124,6 +125,9 @@ model Property {
   tenantScreenings TenantScreening[]
   marketplaceTransactions MarketplaceTransaction[]
   
+  @@index([landlordId])
+  @@index([isAvailable, city])
+  @@index([city, postcode, propertyType])
   @@map("properties")
 }
 
@@ -149,6 +153,10 @@ model Tenancy {
   documents    Document[]
   depositProtections DepositProtection[]
   
+  @@index([status, endDate])
+  @@index([propertyId])
+  @@index([landlordId])
+  @@index([tenantId])
   @@map("tenancies")
 }
 
@@ -172,6 +180,10 @@ model Payment {
   tenancyId     String?
   tenancy       Tenancy?      @relation(fields: [tenancyId], references: [id])
   
+  @@index([status, dueDate])
+  @@index([landlordId, dueDate, status])
+  @@index([propertyId])
+  @@index([tenancyId])
   @@map("payments")
 }
 
@@ -198,6 +210,9 @@ model Document {
   tenancy     Tenancy?     @relation(fields: [tenancyId], references: [id])
   complianceRecords ComplianceRecord[]
   
+  @@index([propertyId])
+  @@index([uploadedBy])
+  @@index([tenancyId])
   @@map("documents")
 }
 
@@ -223,6 +238,9 @@ model MaintenanceRequest {
   assignedTo  String?
   assignee    User?             @relation("MaintenanceAssignee", fields: [assignedTo], references: [id])
   
+  @@index([propertyId, status])
+  @@index([reportedBy])
+  @@index([assignedTo])
   @@map("maintenance_requests")
 }
 
@@ -246,6 +264,8 @@ model ComplianceRecord {
   userId      String?
   user        User?            @relation(fields: [userId], references: [id])
   
+  @@index([propertyId])
+  @@index([userId])
   @@map("compliance_records")
 }
 
@@ -366,4 +386,21 @@ model TenantProfile {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("tenant_profiles")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  timestamp   DateTime @default(now())
+  userId      String
+  action      String
+  resource    String
+  resourceId  String
+  changes     Json
+  metadata    Json
+  result      String // "success" or "failure"
+  errorDetails String?
+
+  @@index([userId])
+  @@index([resource, resourceId])
+  @@map("audit_logs")
 }

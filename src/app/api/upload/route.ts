@@ -1,29 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile } from 'fs/promises'
+import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { db } from '@/lib/db'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { z } from 'zod'
+import { DocumentType } from '@prisma/client'
+
+const documentSchema = z.object({
+    propertyId: z.string().min(1, "Property ID is required"),
+    documentType: z.nativeEnum(DocumentType),
+    description: z.string().optional(),
+    expiresAt: z.string().datetime().optional().nullable(),
+    tenancyId: z.string().optional().nullable(),
+});
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN' && session.user.role !== 'TENANT') {
+        return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    }
+
+    const userId = session.user.id;
+
     const formData = await request.formData()
-    const file = (formData as any).get('file') as File
-    const propertyId = (formData as any).get('propertyId') as string
-    const documentType = (formData as any).get('documentType') as string
-    const description = (formData as any).get('description') as string
-    const expiresAt = (formData as any).get('expiresAt') as string
-    const tenancyId = (formData as any).get('tenancyId') as string
-    const uploadedBy = (formData as any).get('uploadedBy') as string
+    const file: File | null = formData.get('file') as unknown as File
 
     if (!file) {
       return NextResponse.json(
         { error: 'No file uploaded' },
-        { status: 400 }
-      )
-    }
-
-    if (!propertyId) {
-      return NextResponse.json(
-        { error: 'Property ID is required' },
         { status: 400 }
       )
     }
@@ -53,13 +63,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const validatedData = documentSchema.parse({
+        propertyId: formData.get('propertyId'),
+        documentType: formData.get('documentType'),
+        description: formData.get('description'),
+        expiresAt: formData.get('expiresAt'),
+        tenancyId: formData.get('tenancyId'),
+    });
+
     // Create uploads directory if it doesn't exist
-    const uploadsDir = join(process.cwd(), 'uploads')
-    try {
-      await writeFile(uploadsDir, '')
-    } catch (error) {
-      // Directory likely already exists
-    }
+    const uploadsDir = join(process.cwd(), 'public', 'uploads')
+    await mkdir(uploadsDir, { recursive: true })
 
     // Generate unique filename
     const timestamp = Date.now()
@@ -76,17 +90,13 @@ export async function POST(request: NextRequest) {
     // Create document record in database
     const document = await db.document.create({
       data: {
+        ...validatedData,
         filename,
         originalName: file.name,
         filePath: `/uploads/${filename}`,
         fileSize: file.size,
         mimeType: file.type,
-        documentType: documentType as any,
-        description: description || null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        propertyId,
-        uploadedBy: uploadedBy || 'temp-user-id',
-        tenancyId: tenancyId || null
+        uploadedBy: userId,
       },
       include: {
         property: {
@@ -104,6 +114,9 @@ export async function POST(request: NextRequest) {
     }, { status: 201 })
 
   } catch (error) {
+    if (error instanceof z.ZodError) {
+        return NextResponse.json({ error: error.issues }, { status: 400 });
+    }
     console.error('Error uploading file:', error)
     return NextResponse.json(
       { error: 'Failed to upload file' },

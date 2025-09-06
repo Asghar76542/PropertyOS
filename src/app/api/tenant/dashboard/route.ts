@@ -1,17 +1,32 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { UserRole } from '@prisma/client'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { logger } from '@/lib/logger'
+import { AppError, ErrorCode, generateRequestId } from '@/lib/errors'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const requestId = generateRequestId();
+  let session;
   try {
-    // NOTE: In a real app, you'd get the user ID from the session.
-    // For now, we'll use the first tenant as a default
-    const tenant = await db.user.findFirst({
-      where: { role: UserRole.TENANT },
-    })
+    session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
+    }
+
+    if (session.user.role !== 'TENANT') {
+      throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
+
+    const tenantId = session.user.id;
+
+    const tenant = await db.user.findUnique({
+        where: { id: tenantId }
+    });
 
     if (!tenant) {
-      return NextResponse.json({ error: 'No tenant found' }, { status: 404 })
+      throw new AppError('Tenant not found', 404, ErrorCode.NOT_FOUND);
     }
 
     // Fetch tenancy information with all related data
@@ -37,7 +52,7 @@ export async function GET() {
     })
 
     if (!tenancy) {
-      return NextResponse.json({ error: 'No tenancy found for the tenant' }, { status: 404 })
+      throw new AppError('No tenancy found for the tenant', 404, ErrorCode.NOT_FOUND);
     }
 
     // Fetch maintenance requests for the property
@@ -137,7 +152,26 @@ export async function GET() {
 
     return NextResponse.json(data)
   } catch (error) {
-    console.error('[TENANT_DASHBOARD_API]', error)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    logger.error('[TENANT_DASHBOARD_API]', { error, requestId, userId: session?.user?.id })
+    
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { 
+          error: error.message,
+          code: error.code,
+          details: error.details 
+        }, 
+        { status: error.statusCode }
+      )
+    }
+    
+    return NextResponse.json(
+      { 
+        error: 'Internal Server Error',
+        code: ErrorCode.INTERNAL_ERROR,
+        requestId: requestId
+      }, 
+      { status: 500 }
+    )
   }
 }

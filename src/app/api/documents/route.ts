@@ -2,27 +2,35 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { z } from 'zod'
+import { DocumentType } from '@prisma/client'
+import { logger } from '@/lib/logger'
+import { AppError, ErrorCode, generateRequestId } from '@/lib/errors'
+import { createAuditLog } from '@/lib/audit'
 
-// A temporary solution to get the user ID. In a real application, this would
-// come from an authentication session.
-async function getUserId(request: NextRequest): Promise<string | null> {
-  const userId = request.headers.get('x-user-id')
-  if (userId) return userId
-
-  // Fallback to the first landlord if no header is present
-  const landlord = await db.user.findFirst({
-    where: { role: 'LANDLORD' },
-  })
-  return landlord?.id || null
-}
+const documentSchema = z.object({
+    propertyId: z.string().min(1, "Property ID is required"),
+    documentType: z.nativeEnum(DocumentType),
+    description: z.string().optional(),
+    expiresAt: z.string().datetime().optional().nullable(),
+});
 
 export async function GET(request: NextRequest) {
+  const requestId = generateRequestId();
+  let session;
   try {
-    const userId = await getUserId(request)
-
-    if (!userId) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
     }
+
+    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN') {
+        throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
+    
+    const userId = session.user.id;
 
     const documents = await db.document.findMany({
       where: { property: { landlordId: userId } },
@@ -39,36 +47,71 @@ export async function GET(request: NextRequest) {
       documents,
     })
   } catch (error) {
-    console.error('Error fetching documents:', error)
+    logger.error('Error fetching documents:', { error, requestId, userId: session?.user?.id })
+    
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { 
+          error: error.message,
+          code: error.code,
+          details: error.details 
+        }, 
+        { status: error.statusCode }
+      )
+    }
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: 'Failed to fetch documents',
+        code: ErrorCode.INTERNAL_ERROR,
+        requestId: requestId
+      }, 
       { status: 500 }
     )
   }
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = generateRequestId();
+  let session;
+  let validatedData;
   try {
-    const userId = await getUserId(request)
-
-    if (!userId) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
     }
+
+    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN' && session.user.role !== 'TENANT') {
+        throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
+
+    const userId = session.user.id;
 
     const data = await request.formData()
-    const file: File | null = (data as any).get('file') as File
-    const propertyId = (data as any).get('propertyId') as string
-    const documentType = (data as any).get('documentType') as string
-    const description = (data as any).get('description') as string
-    const expiresAt = (data as any).get('expiresAt') as string
+    const file: File | null = data.get('file') as unknown as File
 
     if (!file) {
-      return NextResponse.json({ success: false, error: 'No file provided.' })
+      throw new AppError('No file provided', 400, ErrorCode.VALIDATION_FAILED);
+    }
+
+    // File validation
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    const maxSize = 10 * 1024 * 1024; // 10MB
+
+    if (!allowedTypes.includes(file.type)) {
+        throw new AppError('File type not supported', 400, ErrorCode.VALIDATION_FAILED);
+    }
+
+    if (file.size > maxSize) {
+        throw new AppError('File size exceeds 10MB limit', 400, ErrorCode.VALIDATION_FAILED);
     }
     
-    if (!propertyId) {
-        return NextResponse.json({ success: false, error: 'No property selected.' });
-    }
+    validatedData = documentSchema.parse({
+        propertyId: data.get('propertyId'),
+        documentType: data.get('documentType'),
+        description: data.get('description'),
+        expiresAt: data.get('expiresAt'),
+    });
 
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
@@ -88,19 +131,66 @@ export async function POST(request: NextRequest) {
         filePath: `/uploads/${filename}`,
         fileSize: file.size,
         mimeType: file.type,
-        documentType: documentType as any,
-        description: description || null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        propertyId: propertyId,
+        documentType: validatedData.documentType,
+        description: validatedData.description,
+        expiresAt: validatedData.expiresAt ? new Date(validatedData.expiresAt) : null,
+        propertyId: validatedData.propertyId,
         uploadedBy: userId,
       },
     })
 
+    await createAuditLog({
+        userId: session.user.id,
+        action: 'create_document',
+        resource: 'document',
+        resourceId: document.id,
+        changes: { after: document },
+        result: 'success',
+    });
+
     return NextResponse.json({ document }, { status: 201 })
   } catch (error) {
-    console.error('Error creating document:', error)
+    const errorDetails = error instanceof Error ? error.message : 'Unknown error';
+    await createAuditLog({
+        userId: session?.user?.id || 'unknown',
+        action: 'create_document',
+        resource: 'document',
+        resourceId: 'n/a',
+        changes: { before: validatedData || {} },
+        result: 'failure',
+        errorDetails,
+    });
+
+    logger.error('Error creating document:', { error, requestId, userId: session?.user?.id })
+
+    if (error instanceof z.ZodError) {
+        return NextResponse.json(
+            {
+                error: 'Invalid input',
+                code: ErrorCode.VALIDATION_FAILED,
+                details: error.issues,
+            },
+            { status: 400 }
+        );
+    }
+    
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { 
+          error: error.message,
+          code: error.code,
+          details: error.details 
+        }, 
+        { status: error.statusCode }
+      )
+    }
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: 'Failed to create document',
+        code: ErrorCode.INTERNAL_ERROR,
+        requestId: requestId
+      }, 
       { status: 500 }
     )
   }
