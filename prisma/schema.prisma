@@ -35,6 +35,11 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum PaymentType {
+  RENT
+  EXPENSE
+}
+
 enum MaintenanceStatus {
   OPEN
   IN_PROGRESS
@@ -172,6 +177,11 @@ model Payment {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
+  // New Fields
+  type          PaymentType   @default(RENT)
+  method        String?
+  maintenanceId String?
+
   // Relations
   propertyId    String
   property      Property      @relation(fields: [propertyId], references: [id])
@@ -179,7 +189,8 @@ model Payment {
   landlord      User          @relation(fields: [landlordId], references: [id])
   tenancyId     String?
   tenancy       Tenancy?      @relation(fields: [tenancyId], references: [id])
-  
+  maintenance   MaintenanceRequest? @relation(fields: [maintenanceId], references: [id])
+
   @@index([status, dueDate])
   @@index([landlordId, dueDate, status])
   @@index([propertyId])
@@ -237,7 +248,8 @@ model MaintenanceRequest {
   reporter    User              @relation(fields: [reportedBy], references: [id])
   assignedTo  String?
   assignee    User?             @relation("MaintenanceAssignee", fields: [assignedTo], references: [id])
-  
+  payments    Payment[] // Back-relation
+
   @@index([propertyId, status])
   @@index([reportedBy])
   @@index([assignedTo])

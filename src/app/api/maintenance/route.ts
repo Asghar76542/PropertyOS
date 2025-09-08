@@ -1,159 +1,289 @@
-import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { z } from 'zod'
-import { MaintenanceStatus } from '@prisma/client'
-import { logger } from '@/lib/logger'
-import { AppError, ErrorCode, generateRequestId } from '@/lib/errors'
-import { createAuditLog } from '@/lib/audit'
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { getServerSession } from 'next-auth';
+import { MaintenanceStatus, UserRole } from '@prisma/client';
 
-const maintenanceRequestSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  description: z.string().min(1, "Description is required"),
-  propertyId: z.string().min(1, "Property ID is required"),
-  priority: z.string().optional(),
+import { authOptions } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { AppError, ErrorCode, generateRequestId } from '@/lib/errors';
+import { logger } from '@/lib/logger';
+import { createAuditLog } from '@/lib/audit';
+
+const updateMaintenanceSchema = z.object({
+  id: z.string().min(1),
   status: z.nativeEnum(MaintenanceStatus).optional(),
-  assignedTo: z.string().optional(),
+  assignedTo: z.string().min(1).optional().nullable(),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).optional(),
+  actualCost: z.number().nonnegative().optional(),
+  dueDate: z.string().datetime().optional(),
 });
 
-export async function GET(request: Request) {
+export async function PATCH(req: NextRequest) {
   const requestId = generateRequestId();
   let session;
   try {
-    session = await getServerSession(authOptions)
+    session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
     }
 
-    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN') {
-      throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    const input = updateMaintenanceSchema.parse(await req.json());
+
+    const existingRequest = await db.maintenanceRequest.findUnique({
+      where: { id: input.id },
+    });
+
+    if (!existingRequest) {
+      throw new AppError('Not Found', 404, ErrorCode.NOT_FOUND);
     }
 
-    const landlordId = session.user.id;
+    // RBAC: Tenant can only update their own requests, and with limited scope if needed.
+    // Admins/Landlords have full access.
+    if (
+      session.user.role === UserRole.TENANT &&
+      existingRequest.reportedBy !== session.user.id
+    ) {
+      throw new AppError(
+        'Insufficient Permissions',
+        403,
+        ErrorCode.INSUFFICIENT_PERMISSIONS
+      );
+    }
 
-    const maintenanceRequests = await db.maintenanceRequest.findMany({
-        where: { property: { landlordId: landlordId } },
-        include: {
-            property: true,
-            reporter: true,
-            assignee: true,
-        }
+    const updatedRequest = await db.maintenanceRequest.update({
+      where: { id: input.id },
+      data: {
+        status: input.status,
+        assignedTo: input.assignedTo,
+        priority: input.priority,
+        actualCost: input.actualCost,
+        dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+      },
     });
 
-    const contractors = await db.user.findMany({
-        where: { role: 'CONTRACTOR' }
+    // If request is completed and has a cost, create an associated expense record.
+    if (
+      updatedRequest.status === 'COMPLETED' &&
+      updatedRequest.actualCost &&
+      updatedRequest.actualCost > 0
+    ) {
+      const property = await db.property.findUnique({
+        where: { id: existingRequest.propertyId },
+      });
+
+      if (property) {
+        await db.payment.create({
+          data: {
+            amount: updatedRequest.actualCost,
+            status: 'COMPLETED',
+            type: 'EXPENSE',
+            description: `Expense for maintenance: ${updatedRequest.title}`,
+            maintenanceId: updatedRequest.id,
+            propertyId: existingRequest.propertyId,
+            landlordId: property.landlordId,
+            dueDate: new Date(),
+            paymentDate: new Date(),
+          },
+        });
+      }
+    }
+
+    await createAuditLog({
+      userId: session.user.id,
+      action: 'update_maintenance_request',
+      resource: 'maintenance_request',
+      resourceId: updatedRequest.id,
+      changes: { before: existingRequest, after: updatedRequest },
+      result: 'success',
     });
 
-    return NextResponse.json({ 
-        maintenanceRequests,
-        contractors
-    });
-
+    return NextResponse.json({ maintenanceRequest: updatedRequest });
   } catch (error) {
-    logger.error('Error fetching maintenance data:', { error, requestId, userId: session?.user?.id })
-    
+    logger.error('[MAINTENANCE_API_PATCH]', {
+      error,
+      requestId,
+      userId: session?.user?.id,
+    });
+
     if (error instanceof AppError) {
       return NextResponse.json(
-        { 
-          error: error.message,
-          code: error.code,
-          details: error.details 
-        }, 
+        { error: error.message, code: error.code, details: error.details },
         { status: error.statusCode }
-      )
+      );
     }
-    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        {
+          error: 'Validation failed',
+          code: ErrorCode.VALIDATION_FAILED,
+          details: error.errors,
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
-      { 
-        error: 'Failed to fetch maintenance data',
-        code: ErrorCode.INTERNAL_ERROR,
-        requestId: requestId
-      }, 
+      { error: 'Internal Server Error', code: ErrorCode.INTERNAL_ERROR, requestId },
       { status: 500 }
-    )
+    );
   }
 }
 
-export async function POST(request: Request) {
+// Placeholder for GET and POST
+export async function GET(req: NextRequest) {
   const requestId = generateRequestId();
   let session;
-  let validatedData;
   try {
-    session = await getServerSession(authOptions)
+    session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
+    }
+    // Allow all authenticated users to view maintenance requests, 
+    // but scope the results based on their role.
+
+    const where: Prisma.MaintenanceRequestWhereInput = {};
+    if (session.user.role === UserRole.TENANT) {
+      where.reportedById = session.user.id;
+    } else if (session.user.role === UserRole.LANDLORD) {
+      // Assuming landlords see all requests for their properties.
+      // This requires getting a list of their property IDs first.
+      const properties = await db.property.findMany({
+        where: { landlordId: session.user.id },
+        select: { id: true },
+      });
+      const propertyIds = properties.map((p) => p.id);
+      where.propertyId = { in: propertyIds };
+    } else if (session.user.role === UserRole.CONTRACTOR) {
+        where.assignedToId = session.user.id;
+    }
+    // ADMINs have no restrictions
+
+    const maintenanceRequests = await db.maintenanceRequest.findMany({
+      where,
+      include: { 
+        property: { select: { address: true } }, 
+        assignee: { select: { name: true, id: true } },
+        reporter: { select: { name: true, id: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // For dropdowns, get a list of contractors
+    const contractors = await db.user.findMany({
+        where: { role: UserRole.CONTRACTOR },
+        select: { id: true, name: true },
+    });
+
+    return NextResponse.json({ maintenanceRequests, contractors });
+
+  } catch (error) {
+    logger.error('[MAINTENANCE_API_GET]', {
+      error,
+      requestId,
+      userId: session?.user?.id,
+    });
+
+    if (error instanceof AppError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, details: error.details },
+        { status: error.statusCode }
+      );
+    }
+
+    return NextResponse.json(
+      { error: 'Internal Server Error', code: ErrorCode.INTERNAL_ERROR, requestId },
+      { status: 500 }
+    );
+  }
+}
+
+const createMaintenanceSchema = z.object({
+  title: z.string().min(3, 'Title must be at least 3 characters long'),
+  description: z.string().min(10, 'Description must be at least 10 characters long'),
+  propertyId: z.string().min(1),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).optional(),
+});
+
+export async function POST(req: NextRequest) {
+  const requestId = generateRequestId();
+  let session;
+  try {
+    session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       throw new AppError('Unauthorized', 401, ErrorCode.UNAUTHORIZED);
     }
 
-    if (session.user.role !== 'LANDLORD' && session.user.role !== 'ADMIN' && session.user.role !== 'TENANT') {
-        throw new AppError('Insufficient permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    const input = createMaintenanceSchema.parse(await req.json());
+
+    // Verify property ownership/tenancy before allowing creation
+    const property = await db.property.findUnique({
+      where: { id: input.propertyId },
+      include: { tenancies: { where: { tenantId: session.user.id } } },
+    });
+
+    if (!property) {
+      throw new AppError('Property not found', 404, ErrorCode.NOT_FOUND);
     }
 
-    const userId = session.user.id;
-    const body = await request.json();
+    const isLandlord = property.landlordId === session.user.id;
+    const isTenant = property.tenancies.length > 0;
 
-    validatedData = maintenanceRequestSchema.parse(body);
+    if (session.user.role === UserRole.LANDLORD && !isLandlord) {
+        throw new AppError('Landlord does not own this property', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
+    if (session.user.role === UserRole.TENANT && !isTenant) {
+        throw new AppError('Tenant does not rent this property', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+    }
 
-    const maintenanceRequest = await db.maintenanceRequest.create({
+    const newRequest = await db.maintenanceRequest.create({
       data: {
-        ...validatedData,
-        reportedBy: userId,
+        title: input.title,
+        description: input.description,
+        propertyId: input.propertyId,
+        priority: input.priority || 'MEDIUM',
+        reportedById: session.user.id,
+        status: 'OPEN',
       },
     });
 
     await createAuditLog({
-        userId: session.user.id,
-        action: 'create_maintenance_request',
-        resource: 'maintenance_request',
-        resourceId: maintenanceRequest.id,
-        changes: { after: maintenanceRequest },
-        result: 'success',
+      userId: session.user.id,
+      action: 'create_maintenance_request',
+      resource: 'maintenance_request',
+      resourceId: newRequest.id,
+      changes: { after: newRequest },
+      result: 'success',
     });
 
-    return NextResponse.json({ maintenanceRequest }, { status: 201 });
+    return NextResponse.json({ maintenanceRequest: newRequest }, { status: 201 });
+
   } catch (error) {
-    const errorDetails = error instanceof Error ? error.message : 'Unknown error';
-    await createAuditLog({
-        userId: session?.user?.id || 'unknown',
-        action: 'create_maintenance_request',
-        resource: 'maintenance_request',
-        resourceId: 'n/a',
-        changes: { before: validatedData || {} },
-        result: 'failure',
-        errorDetails,
+    logger.error('[MAINTENANCE_API_POST]', {
+      error,
+      requestId,
+      userId: session?.user?.id,
     });
 
-    logger.error('Error creating maintenance request:', { error, requestId, userId: session?.user?.id })
-
-    if (error instanceof z.ZodError) {
-        return NextResponse.json(
-            {
-                error: 'Invalid input',
-                code: ErrorCode.VALIDATION_FAILED,
-                details: error.issues,
-            },
-            { status: 400 }
-        );
-    }
-    
     if (error instanceof AppError) {
       return NextResponse.json(
-        { 
-          error: error.message,
-          code: error.code,
-          details: error.details 
-        }, 
+        { error: error.message, code: error.code, details: error.details },
         { status: error.statusCode }
-      )
+      );
     }
-    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        {
+          error: 'Validation failed',
+          code: ErrorCode.VALIDATION_FAILED,
+          details: error.errors,
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
-      { 
-        error: 'Failed to create maintenance request',
-        code: ErrorCode.INTERNAL_ERROR,
-        requestId: requestId
-      }, 
+      { error: 'Internal Server Error', code: ErrorCode.INTERNAL_ERROR, requestId },
       { status: 500 }
-    )
+    );
   }
 }

@@ -11,6 +11,7 @@
     "type-check": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:e2e": "playwright test",
     "docker:build": "docker build -t propertyos .",
     "docker:run": "docker run -p 3000:3000 propertyos",
     "docker:compose": "docker-compose up --build",
@@ -101,6 +102,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.1.4",
     "@testing-library/react": "^14.1.2",

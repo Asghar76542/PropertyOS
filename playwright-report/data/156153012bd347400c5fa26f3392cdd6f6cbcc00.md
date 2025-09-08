@@ -1,0 +1,104 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - navigation [ref=e3]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e11]
+          - generic [ref=e15]:
+            - heading "PropertyOS" [level=1] [ref=e16]
+            - paragraph [ref=e17]: Professional Property Management System
+        - generic [ref=e18]:
+          - link "Login" [ref=e19] [cursor=pointer]:
+            - /url: /login
+            - button "Login" [ref=e20]
+          - link "Get Started" [ref=e21] [cursor=pointer]:
+            - /url: /signup
+            - button "Get Started" [ref=e22]
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - img [ref=e32]
+        - generic [ref=e34]: Next-Generation Property Management
+        - img [ref=e35]
+      - heading "Transform Your Property Management Experience" [level=1] [ref=e37]:
+        - generic [ref=e38]: Transform Your Property
+        - generic [ref=e39]: Management Experience
+      - paragraph [ref=e40]: The complete platform for landlords and tenants. Streamline rent collection, maintenance requests, document management, and communication - all in one place.
+      - generic [ref=e41]:
+        - link "Get Started Free" [ref=e42] [cursor=pointer]:
+          - /url: /signup
+          - button "Get Started Free" [ref=e43]:
+            - text: Get Started Free
+            - img
+        - link "Sign In" [ref=e44] [cursor=pointer]:
+          - /url: /login
+          - button "Sign In" [ref=e45]
+      - generic [ref=e46]:
+        - generic [ref=e48]:
+          - img [ref=e50]
+          - generic [ref=e53]: Test Dashboard
+          - generic [ref=e54]: Explore all system features and capabilities
+        - generic [ref=e56]:
+          - img [ref=e58]
+          - generic [ref=e62]: Landlord Dashboard
+          - generic [ref=e63]: Manage properties, tenants, and rental income
+        - generic [ref=e65]:
+          - img [ref=e67]
+          - generic [ref=e70]: Tenant Portal
+          - generic [ref=e71]: Pay rent, request maintenance, and communicate
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]: Platform Features
+        - heading "Everything You Need in One Platform" [level=2] [ref=e77]
+        - paragraph [ref=e78]: PropertyOS brings together all the tools landlords and tenants need for seamless property management
+      - generic [ref=e79]:
+        - generic [ref=e82]:
+          - generic [ref=e83]:
+            - img [ref=e85]
+            - generic [ref=e87]: Automated Rent Collection
+          - paragraph [ref=e89]: Streamline rent payments with automated collection, late fee management, and detailed financial reporting.
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - img [ref=e95]
+            - generic [ref=e97]: Maintenance Management
+          - paragraph [ref=e99]: Track maintenance requests, assign contractors, and keep detailed records of all property work.
+        - generic [ref=e102]:
+          - generic [ref=e103]:
+            - img [ref=e105]
+            - generic [ref=e108]: Document Management
+          - paragraph [ref=e110]: Store and manage leases, certificates, and important documents with secure cloud storage.
+        - generic [ref=e113]:
+          - generic [ref=e114]:
+            - img [ref=e116]
+            - generic [ref=e121]: Tenant Communication
+          - paragraph [ref=e123]: Built-in messaging system for seamless communication between landlords and tenants.
+        - generic [ref=e126]:
+          - generic [ref=e127]:
+            - img [ref=e129]
+            - generic [ref=e131]: Financial Analytics
+          - paragraph [ref=e133]: Comprehensive reporting and analytics to track income, expenses, and property performance.
+        - generic [ref=e136]:
+          - generic [ref=e137]:
+            - img [ref=e139]
+            - generic [ref=e141]: Compliance Tracking
+          - paragraph [ref=e143]: Stay compliant with automated reminders for certificates, inspections, and legal requirements.
+    - generic [ref=e146]:
+      - heading "Ready to Transform Your Property Management?" [level=2] [ref=e147]
+      - paragraph [ref=e148]: Join thousands of landlords and tenants who are already using PropertyOS to streamline their rental experience.
+      - generic [ref=e149]:
+        - link "Start Free Trial" [ref=e150] [cursor=pointer]:
+          - /url: /signup
+          - button "Start Free Trial" [ref=e151]:
+            - text: Start Free Trial
+            - img
+        - link "Sign In" [ref=e152] [cursor=pointer]:
+          - /url: /login
+          - button "Sign In" [ref=e153]
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e154]
+  - button "Open Next.js Dev Tools" [ref=e160] [cursor=pointer]:
+    - img [ref=e161] [cursor=pointer]
+```

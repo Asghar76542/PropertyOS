@@ -1,10 +1,11 @@
-import { NextAuthOptions } from 'next-auth'
+import { NextAuthOptions, Session } from 'next-auth'
 import { PrismaAdapter } from "@next-auth/prisma-adapter"
 import { db } from '@/lib/db'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import GoogleProvider from 'next-auth/providers/google'
 import { UserRole } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { AppError, ErrorCode } from '@/lib/errors'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(db),
@@ -128,6 +129,12 @@ export const authOptions: NextAuthOptions = {
       return `${baseUrl}/select-dashboard`
     }
   },
+}
+
+export function requireRole(session: Session | null, allowedRoles: UserRole[]) {
+  if (!session?.user?.role || !allowedRoles.includes(session.user.role)) {
+    throw new AppError('Insufficient Permissions', 403, ErrorCode.INSUFFICIENT_PERMISSIONS);
+  }
 }
 
 declare module 'next-auth' {

@@ -78,14 +78,13 @@ export async function GET(request: Request) {
       personalInfo: {
         name: tenant.name || 'N/A',
         email: tenant.email,
-        phone: '+44 7700 900123', // Mock data - not in schema
         moveInDate: tenancy.startDate.toISOString(),
         leaseEnd: tenancy.endDate.toISOString(),
         propertyAddress: tenancy.property.address,
         propertyCity: tenancy.property.city,
         landlordName: tenancy.property.landlord.name || 'N/A',
         landlordEmail: tenancy.property.landlord.email,
-        landlordPhone: '+44 7700 900456', // Mock data - not in schema
+        landlordId: tenancy.property.landlord.id,
       },
       financials: {
         monthlyRent: tenancy.monthlyRent,
@@ -97,8 +96,8 @@ export async function GET(request: Request) {
           id: p.id,
           amount: p.amount,
           date: p.paymentDate?.toISOString() || p.dueDate.toISOString(),
-          status: p.status.toLowerCase(),
-          method: 'bank_transfer', // Mock data - not in schema
+          status: p.status,
+          method: p.method || null,
         })),
       },
       maintenance: {
@@ -108,8 +107,8 @@ export async function GET(request: Request) {
         recentRequests: maintenanceRequests.map(r => ({
           id: r.id,
           title: r.title,
-          status: r.status.toLowerCase(),
-          priority: r.priority.toLowerCase(),
+          status: r.status,
+          priority: r.priority,
           submittedDate: r.createdAt.toISOString(),
           estimatedCompletion: r.dueDate?.toISOString() || 'N/A',
         })),
@@ -127,26 +126,9 @@ export async function GET(request: Request) {
           size: `${(d.fileSize / 1024).toFixed(0)} KB`,
         })),
       },
-      communications: { // Still mock - no message system yet
-        unreadMessages: 2,
-        recentMessages: [
-          {
-            id: "1",
-            from: `${tenancy.property.landlord.name} (Landlord)`,
-            subject: "Lease Renewal Notice",
-            message: "Your lease is up for renewal soon. Please let me know if you'd like to continue.",
-            date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-            unread: true
-          },
-          {
-            id: "2",
-            from: "Property Management System",
-            subject: "Rent Payment Reminder",
-            message: `Your next rent payment of £${tenancy.monthlyRent} is due soon.`,
-            date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-            unread: true
-          },
-        ]
+      communications: {
+        unreadMessages: 0,
+        recentMessages: []
       }
     };
 

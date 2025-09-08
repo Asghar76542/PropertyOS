@@ -1,33 +1,33 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getToken } from 'next-auth/jwt'
+import { withAuth } from 'next-auth/middleware';
+import { NextResponse } from 'next/server';
 
-export async function middleware(req: NextRequest) {
-  // Get the pathname of the request (e.g. /, /protected)
-  const path = req.nextUrl.pathname
-
-  // Define paths that require authentication
-  const protectedPaths = ['/dashboard', '/tenant-dashboard', '/properties', '/payments', '/maintenance', '/documents', '/financial', '/compliance']
-  
-  const isProtected = protectedPaths.some(protectedPath => 
-    path.startsWith(protectedPath)
-  )
-
-  if (isProtected) {
-    const token = await getToken({
-      req,
-      secret: process.env.NEXTAUTH_SECRET,
-    })
-
-    if (!token) {
-      const url = new URL('/login', req.url)
-      url.searchParams.set('callbackUrl', encodeURI(req.url))
-      return NextResponse.redirect(url)
+export default withAuth(
+  function middleware(req) {
+    // Add any additional logic here if needed, e.g., checking roles
+    return NextResponse.next();
+  },
+  {
+    callbacks: {
+      authorized: ({ token }) => !!token, // Protects routes if user is not logged in
+    },
+    pages: {
+        signIn: '/login',
     }
   }
-
-  return NextResponse.next()
-}
+);
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
-}
+  // Protect all routes except for public pages like login, signup, landing page
+  matcher: [
+    '/dashboard/:path*',
+    '/properties/:path*',
+    '/maintenance/:path*',
+    '/financial/:path*',
+    '/payments/:path*',
+    '/documents/:path*',
+    '/compliance/:path*',
+    '/tenant-dashboard/:path*',
+    '/select-dashboard',
+    '/api/((?!auth|public).*)', // Protect all API routes except auth and public ones
+  ],
+};

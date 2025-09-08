@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`GET /api/tenant/dashboard should return the correct dashboard data shape for a valid tenant 1`] = `
+{
+  "communications": {
+    "recentMessages": [],
+    "unreadMessages": 0,
+  },
+  "documents": {
+    "importantDocuments": [
+      {
+        "id": "doc-1",
+        "name": "lease.pdf",
+        "size": "200 KB",
+        "type": "Lease Agreement",
+        "uploadDate": "2024-01-01T00:00:00.000Z",
+      },
+    ],
+    "leaseAgreement": {
+      "available": true,
+      "lastUpdated": "2024-01-01T00:00:00.000Z",
+    },
+  },
+  "financials": {
+    "balanceDue": 1200,
+    "lastPaymentDate": "2024-08-01T00:00:00.000Z",
+    "monthlyRent": 1200,
+    "nextPaymentDue": "2024-09-01T00:00:00.000Z",
+    "paymentHistory": [
+      {
+        "amount": 1200,
+        "date": "2024-08-01T00:00:00.000Z",
+        "id": "payment-1",
+        "method": "bank_transfer",
+        "status": "COMPLETED",
+      },
+      {
+        "amount": 1200,
+        "date": "2024-09-01T00:00:00.000Z",
+        "id": "payment-2",
+        "method": null,
+        "status": "PENDING",
+      },
+    ],
+    "securityDeposit": 1500,
+  },
+  "maintenance": {
+    "completed": 0,
+    "inProgress": 0,
+    "openRequests": 1,
+    "recentRequests": [
+      {
+        "estimatedCompletion": "N/A",
+        "id": "req-1",
+        "priority": "MEDIUM",
+        "status": "OPEN",
+        "submittedDate": "2024-08-15T00:00:00.000Z",
+        "title": "Leaky Faucet",
+      },
+    ],
+  },
+  "personalInfo": {
+    "email": "tenant@test.com",
+    "landlordEmail": "landlord@test.com",
+    "landlordName": "Test Landlord",
+    "leaseEnd": "2025-01-01T00:00:00.000Z",
+    "moveInDate": "2024-01-01T00:00:00.000Z",
+    "name": "Test Tenant",
+    "propertyAddress": "123 Fake St",
+    "propertyCity": "Testville",
+  },
+}
+`;
